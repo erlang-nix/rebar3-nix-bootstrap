@@ -26,8 +26,9 @@
 
 -record(data, {version
               , registry_only = false
-              , compile_ports = false
+              , compile_ports
               , erl_libs
+              , plugins
               , root
               , name
               , registry_snapshot}).
@@ -48,6 +49,7 @@ do(RequiredData = #data{registry_only = true}) ->
 do(RequiredData) ->
     ok = bootstrap_registry(RequiredData),
     ok = bootstrap_configs(RequiredData),
+    ok = bootstrap_plugins(RequiredData),
     ok = bootstrap_libs(RequiredData).
 
 %% @doc
@@ -56,14 +58,26 @@ do(RequiredData) ->
 %% command line, "register-only" and "compile-ports"
 -spec parse_args([string()]) -> #data{}.
 parse_args(Args) ->
-    {ok, #data{registry_only = lists:member("registry-only", Args)
-              , compile_ports = lists:member("compile-ports", Args)}}.
+    {ok, #data{registry_only = lists:member("registry-only", Args)}}.
 
 -spec bootstrap_configs(#data{}) -> ok.
 bootstrap_configs(RequiredData)->
     io:format("Boostrapping app and rebar configurations~n"),
     ok = if_single_app_project_update_app_src_version(RequiredData),
     ok = if_compile_ports_add_pc_plugin(RequiredData).
+
+-spec bootstrap_plugins(#data{}) -> ok.
+bootstrap_plugins(#data{plugins = Plugins}) ->
+    io:format("Bootstrapping rebar3 plugins~n"),
+    Target = "_build/default/plugins/",
+    Paths = string:tokens(Plugins, " "),
+    CopiableFiles =
+        lists:foldl(fun(Path, Acc) ->
+                            gather_directory_contents(Path ++ "/lib/erlang/lib/") ++ Acc
+                    end, [], Paths),
+    lists:foreach(fun (Path) ->
+                          make_symlink(Path, Target)
+                  end, CopiableFiles).
 
 -spec bootstrap_libs(#data{}) -> ok.
 bootstrap_libs(#data{erl_libs = ErlLibs}) ->
@@ -141,10 +155,17 @@ make_sure_registry_snapshot_exists(RegistrySnapshot) ->
 gather_required_data_from_the_environment(ArgData) ->
     {ok, ArgData#data{ version = guard_env("version")
                      , erl_libs = os:getenv("ERL_LIBS", [])
+                     , plugins = os:getenv("buildPlugins", [])
                      , root = code:root_dir()
                      , name = guard_env("name")
+                     , compile_ports = nix2bool(os:getenv("compilePorts", ""))
                      , registry_snapshot = guard_env("HEX_REGISTRY_SNAPSHOT")}}.
 
+-spec nix2bool(any()) -> boolean().
+nix2bool("1") ->
+    true;
+nix2bool("") ->
+    false.
 
 -spec guard_env(string()) -> string().
 guard_env(Name) ->
