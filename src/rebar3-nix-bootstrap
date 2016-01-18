@@ -73,10 +73,10 @@ bootstrap_plugins(#data{plugins = Plugins}) ->
     Paths = string:tokens(Plugins, " "),
     CopiableFiles =
         lists:foldl(fun(Path, Acc) ->
-                            gather_directory_contents(Path ++ "/lib/erlang/lib/") ++ Acc
+                            gather_dependency(Path) ++ Acc
                     end, [], Paths),
     lists:foreach(fun (Path) ->
-                          make_symlink(Path, Target)
+                          link_app(Path, Target)
                   end, CopiableFiles).
 
 -spec bootstrap_libs(#data{}) -> ok.
@@ -89,34 +89,47 @@ bootstrap_libs(#data{erl_libs = ErlLibs}) ->
                             gather_directory_contents(Path) ++ Acc
                     end, [], Paths),
     lists:foreach(fun (Path) ->
-                          make_symlink(Path, Target)
+                          link_app(Path, Target)
                   end, CopiableFiles).
 
--spec gather_directory_contents(string()) -> [string()].
+-spec gather_dependency(string()) -> [{string(), string()}].
+gather_dependency(Path) ->
+    FullLibrary = filename:join(Path, "lib/erlang/lib/"),
+    case filelib:is_dir(FullLibrary) of
+        true ->
+            gather_directory_contents(FullLibrary);
+        false ->
+            [raw_hex(Path)]
+    end.
+
+-spec raw_hex(string()) -> {string(), string()}.
+raw_hex(Path) ->
+    [_, Name] = re:split(Path, "-hex-source-"),
+    {Path, erlang:binary_to_list(Name)}.
+
+-spec gather_directory_contents(string()) -> [{string(), string()}].
 gather_directory_contents(Path) ->
     {ok, Names} = file:list_dir(Path),
-    lists:map(fun (Name) ->
-                      filename:join(Path, Name)
+    lists:map(fun(AppName) ->
+                 {filename:join(Path, AppName), fixup_app_name(AppName)}
               end, Names).
 
 %% @doc
 %% Makes a symlink from the directory pointed at by Path to a
 %% directory of the same name in Target. So if we had a Path of
-%% `foo/bar/baz/bash` and a Target of `faz/foo/foos`, the symlink
-%% would be `faz/foo/foos/bash`.
+%% {`foo/bar/baz/bash`, `baz`} and a Target of `faz/foo/foos`, the symlink
+%% would be `faz/foo/foos/baz`.
+-spec link_app({string(), string()}, string()) -> ok.
+link_app({Path, TargetFile}, TargetDir) ->
+    Target = filename:join(TargetDir, TargetFile),
+    make_symlink(Path, Target).
+
 -spec make_symlink(string(), string()) -> ok.
-make_symlink(Path, Target) ->
-    AppName = filename:basename(Path),
-    TargetFile = filename:join(Target, fixup_app_name(AppName)),
-    filelib:ensure_dir(TargetFile),
-    ok = case filelib:is_file(TargetFile) of
-             true ->
-                 file:delete(TargetFile);
-             false ->
-                 ok
-         end,
+make_symlink(Path, TargetFile) ->
+    file:delete(TargetFile),
+    ok = filelib:ensure_dir(TargetFile),
     io:format("Making symlink from ~s to ~s~n", [Path, TargetFile]),
-    file:make_symlink(Path, TargetFile).
+    ok = file:make_symlink(Path, TargetFile).
 
 %% @doc
 %% This takes an app name in the standard OTP <name>-<version> format
