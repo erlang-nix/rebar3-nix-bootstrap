@@ -64,7 +64,8 @@ parse_args(Args) ->
 bootstrap_configs(RequiredData)->
     io:format("Boostrapping app and rebar configurations~n"),
     ok = if_single_app_project_update_app_src_version(RequiredData),
-    ok = if_compile_ports_add_pc_plugin(RequiredData).
+    ok = rewrite_rebar_config(RequiredData).
+
 
 -spec bootstrap_plugins(#data{}) -> ok.
 bootstrap_plugins(#data{plugins = Plugins}) ->
@@ -137,8 +138,12 @@ make_symlink(Path, TargetFile) ->
 %% respect OTP conventions in some cases.
 -spec fixup_app_name(string()) -> string().
 fixup_app_name(FileName) ->
-    [Name, _Version] = string:tokens(FileName, "-"),
+    {Name, _Version} = split_app_vsn(FileName),
     Name.
+
+split_app_vsn(AppVsn) ->
+    [N, V] = re:split(AppVsn, "-", [{parts, 2}, {return, list}]),
+    {N, V}.
 
 -spec bootstrap_registry(#data{}) -> ok.
 bootstrap_registry(#data{registry_snapshot = RegistrySnapshot}) ->
@@ -192,26 +197,31 @@ guard_env(Name) ->
             Variable
     end.
 
+write_terms(Fn, Terms) ->
+    Text = lists:map(fun(Term) -> io_lib:format("~tp.~n", [Term]) end,
+                     Terms),
+    file:write_file(Fn, Text).
+
 %% @doc
 %% If the compile ports flag is set, rewrite the rebar config to
 %% include the 'pc' plugin.
--spec if_compile_ports_add_pc_plugin(#data{}) -> ok.
-if_compile_ports_add_pc_plugin(#data{compile_ports = true}) ->
-    ConfigTerms = update_config(read_rebar_config()),
-    Text = lists:map(fun(Term) -> io_lib:format("~tp.~n", [Term]) end,
-                     ConfigTerms),
-    file:write_file("rebar.config", Text);
-if_compile_ports_add_pc_plugin(_) ->
-    ok.
+-spec rewrite_rebar_config(#data{}) -> ok.
+rewrite_rebar_config(Data) ->
+    ConfigTerms0 = read_rebar_config(),
+    ConfigTerms1 = if_compile_ports_add_pc_plugin(Data, ConfigTerms0),
+    ConfigTerms2 = lists:keydelete(profiles, 1, ConfigTerms1),
+    write_terms("rebar.config", ConfigTerms2).
 
--spec update_config([term()]) -> [term()].
-update_config(Config) ->
+-spec if_compile_ports_add_pc_plugin(#data{}, [term()]) -> [term()].
+if_compile_ports_add_pc_plugin(#data{compile_ports = true}, Config) ->
     case lists:keysearch(plugins, 1, Config) of
         {ok, {plugins, PluginList}} ->
-            lists:keystore(plugins, 1, Config, {plugins, [Config | PluginList]});
+            lists:keystore(plugins, 1, Config, {plugins, [pc | PluginList]});
         _ ->
             [{plugins, [pc]} | Config]
-    end.
+    end;
+if_compile_ports_add_pc_plugin(_,  Config) ->
+    Config.
 
 -spec read_rebar_config() -> [term()].
 read_rebar_config() ->
@@ -238,7 +248,7 @@ if_single_app_project_update_app_src_version(#data{name = Name,
 update_app_src_with_version(SrcFile, Version) ->
     {ok, [{application, Name, Details}]} = file:consult(SrcFile),
     NewDetails = lists:keyreplace(vsn, 1, Details, {vsn, Version}),
-    file:write_file(SrcFile, io_lib:fwrite("~p.\n", [{application, Name, NewDetails}])).
+    write_terms(SrcFile, [[{application, Name, NewDetails}]]).
 
 -spec app_src_exists(string()) -> boolean().
 app_src_exists(Name) ->
