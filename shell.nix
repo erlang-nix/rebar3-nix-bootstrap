@@ -7,7 +7,7 @@ let
   f = { stdenv, erlang }:
       stdenv.mkDerivation {
         name = "rebar3-nix-bootstrap";
-        version = "0.0.1";
+        version = "0.0.3";
         src = ./.;
         buildInputs = [ erlang ];
       };
